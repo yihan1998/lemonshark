@@ -1,4 +1,8 @@
+use anyhow::{Context, Result};
 use log::{info, warn};
+use clap::{crate_name, crate_version, App, AppSettings};
+use env_logger::Env;
+use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -46,4 +50,15 @@ async fn main() -> Result<()> {
 
     // NOTE: This log entry is used to compute performance.
     info!("Transactions rate: {} tx/s", rate);
+
+    Ok(())
 }
+
+struct Client {
+    target: SocketAddr,
+    size: usize,
+    rate: u64,
+    nodes: Vec<SocketAddr>,
+}
+
+// TODO: Eventfd

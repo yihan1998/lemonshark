@@ -4,3 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tokio = { version = "1.5.0", features = ["full"] }
+clap = "2.33.3"
+env_logger = "0.7.1"
+log = "0.4.11"
+anyhow = "1.0.40"
+
+[[bin]]         
+name = "benchmark_client"   
+path = "src/benchmark_client.rs" 
