@@ -1,0 +1,15 @@
+[package]
+name = "worker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.5.0", features = ["sync", "rt", "macros"] }
+serde = { version = "1.0", features = ["derive"] }
+bytes = "1.0.1"
+log = "0.4.14"
+futures = "0.3.14"
+async-trait = "0.1.50"
+
+config = { path = "../config" }
+network = { path = "../network" }
