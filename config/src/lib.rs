@@ -1,4 +1,4 @@
-use crypto::PublicKey;
+use crypto::{generate_production_keypair, PublicKey, SecretKey};
 use log::info;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -14,8 +14,8 @@ pub enum ConfigError {
     #[error("Node {0} is not in the committee")]
     NotInCommittee(PublicKey),
 
-    #[error("Unknown worker id {0}")]
-    UnknownWorker(WorkerId),
+    #[error("Unknown agent id {0}")]
+    UnknownWorker(AgentId),
 
     #[error("Failed to read config file '{file}': {message}")]
     ImportError { file: String, message: String },
@@ -24,8 +24,89 @@ pub enum ConfigError {
     ExportError { file: String, message: String },
 }
 
+pub trait Import: DeserializeOwned {
+    fn import(path: &str) -> Result<Self, ConfigError> {
+        let reader = || -> Result<Self, std::io::Error> {
+            let data = fs::read(path)?;
+            Ok(serde_json::from_slice(data.as_slice())?)
+        };
+        reader().map_err(|e| ConfigError::ImportError {
+            file: path.to_string(),
+            message: e.to_string(),
+        })
+    }
+}
+
+pub trait Export: Serialize {
+    fn export(&self, path: &str) -> Result<(), ConfigError> {
+        let writer = || -> Result<(), std::io::Error> {
+            let file = OpenOptions::new().create(true).write(true).open(path)?;
+            let mut writer = BufWriter::new(file);
+            let data = serde_json::to_string_pretty(self).unwrap();
+            writer.write_all(data.as_ref())?;
+            writer.write_all(b"\n")?;
+            Ok(())
+        };
+        writer().map_err(|e| ConfigError::ExportError {
+            file: path.to_string(),
+            message: e.to_string(),
+        })
+    }
+}
+
 pub type Stake = u32;
-pub type WorkerId = u32;
+pub type AgentId = u32;
+
+#[derive(Deserialize, Clone)]
+pub struct Parameters {
+    /// The preferred header size. The primary creates a new header when it has enough parents and
+    /// enough batches' digests to reach `header_size`. Denominated in bytes.
+    pub header_size: usize,
+    /// The maximum delay that the primary waits between generating two headers, even if the header
+    /// did not reach `max_header_size`. Denominated in ms.
+    pub max_header_delay: u64,
+    /// The depth of the garbage collection (Denominated in number of rounds).
+    pub gc_depth: u64,
+    /// The delay after which the synchronizer retries to send sync requests. Denominated in ms.
+    pub sync_retry_delay: u64,
+    /// Determine with how many nodes to sync when re-trying to send sync-request. These nodes
+    /// are picked at random from the committee.
+    pub sync_retry_nodes: usize,
+    /// The preferred batch size. The workers seal a batch of transactions when it reaches this size.
+    /// Denominated in bytes.
+    pub batch_size: usize,
+    /// The delay after which the workers seal a batch of transactions, even if `max_batch_size`
+    /// is not reached. Denominated in ms.
+    pub max_batch_delay: u64,
+}
+
+impl Default for Parameters {
+    fn default() -> Self {
+        Self {
+            header_size: 1_000,
+            max_header_delay: 100,
+            gc_depth: 50,
+            sync_retry_delay: 5_000,
+            sync_retry_nodes: 3,
+            batch_size: 500_000,
+            max_batch_delay: 100,
+        }
+    }
+}
+
+impl Import for Parameters {}
+
+impl Parameters {
+    pub fn log(&self) {
+        info!("Header size set to {} B", self.header_size);
+        info!("Max header delay set to {} ms", self.max_header_delay);
+        info!("Garbage collection depth set to {} rounds", self.gc_depth);
+        info!("Sync retry delay set to {} ms", self.sync_retry_delay);
+        info!("Sync retry nodes set to {} nodes", self.sync_retry_nodes);
+        info!("Batch size set to {} B", self.batch_size);
+        info!("Max batch delay set to {} ms", self.max_batch_delay);
+    }
+}
 
 #[derive(Clone, Deserialize)]
 pub struct PrimaryAddresses {
@@ -52,7 +133,7 @@ pub struct Authority {
     /// The network addresses of the primary.
     pub primary: PrimaryAddresses,
     /// Map of workers' id and their network addresses.
-    pub workers: HashMap<WorkerId, WorkerAddresses>,
+    pub workers: HashMap<AgentId, WorkerAddresses>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -60,11 +141,29 @@ pub struct Committee {
     pub authorities: BTreeMap<PublicKey, Authority>,
 }
 
-pub type PublicKey = [u8; 32];
+impl Import for Committee {}
 
 impl Committee {
-    /// Returns the addresses of a specific worker (`id`) of a specific authority (`to`).
-    pub fn worker(&self, to: &PublicKey, id: &WorkerId) -> Result<WorkerAddresses, ConfigError> {
+    /// Returns the number of authorities.
+    pub fn size(&self) -> usize {
+        self.authorities.len()
+    }
+
+    /// Return the stake of a specific authority.
+    pub fn stake(&self, name: &PublicKey) -> Stake {
+        self.authorities.get(&name).map_or_else(|| 0, |x| x.stake)
+    }
+
+    /// Returns the stake required to reach a quorum (2f+1).
+    pub fn quorum_threshold(&self) -> Stake {
+        // If N = 3f + 1 + k (0 <= k < 3)
+        // then (2 N + 3) / 3 = 2f + 1 + (2k + 2)/3 = 2f + 1 + k = N - f
+        let total_votes: Stake = self.authorities.values().map(|x| x.stake).sum();
+        2 * total_votes / 3 + 1
+    }
+
+    /// Returns the addresses of a specific agent (`id`) of a specific authority (`to`).
+    pub fn agent(&self, to: &PublicKey, id: &AgentId) -> Result<WorkerAddresses, ConfigError> {
         self.authorities
             .iter()
             .find(|(name, _)| name == &to)
@@ -73,7 +172,31 @@ impl Committee {
             .workers
             .iter()
             .find(|(worker_id, _)| worker_id == &id)
-            .map(|(_, worker)| worker.clone())
+            .map(|(_, agent)| agent.clone())
             .ok_or_else(|| ConfigError::NotInCommittee(*to))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct KeyPair {
+    /// The node's public key (and identifier).
+    pub name: PublicKey,
+    /// The node's secret key.
+    pub secret: SecretKey,
+}
+
+impl Import for KeyPair {}
+impl Export for KeyPair {}
+
+impl KeyPair {
+    pub fn new() -> Self {
+        let (name, secret) = generate_production_keypair();
+        Self { name, secret }
+    }
+}
+
+impl Default for KeyPair {
+    fn default() -> Self {
+        Self::new()
     }
 }

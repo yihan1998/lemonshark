@@ -5,6 +5,13 @@ from os.path import basename, splitext
 from time import sleep
 
 from benchmark.commands import CommandMaker
+from benchmark.config import (
+    Key,
+    LocalCommittee,
+    NodeParameters,
+    BenchParameters,
+    ConfigError,
+)
 from benchmark.logs import LogParser, ParseError
 from benchmark.utils import Print, BenchError, PathMaker
 
@@ -63,6 +70,7 @@ class LocalBench:
             key_files = [PathMaker.key_file(i) for i in range(nodes)]
             for filename in key_files:
                 cmd = CommandMaker.generate_key(filename).split()
+                Print.info(f"Generate configuration files: {cmd} ...")
                 subprocess.run(cmd, check=True)
                 keys += [Key.from_file(filename)]
 
@@ -71,29 +79,6 @@ class LocalBench:
             committee.print(PathMaker.committee_file())
 
             self.node_parameters.print(PathMaker.parameters_file())
-
-            # Run the clients (they will wait for the nodes to be ready).
-            workers_addresses = committee.workers_addresses(self.faults)
-            rate_share = ceil(rate / committee.workers())
-            for i, addresses in enumerate(workers_addresses):
-                for id, address in addresses:
-                    cmd = CommandMaker.run_client(
-                        address,
-                        self.tx_size,
-                        rate_share,
-                        [x for y in workers_addresses for _, x in y],
-                    )
-                    log_file = PathMaker.client_log_file(i, id)
-                    self._background_run(cmd, log_file)
-
-            # Wait for all transactions to be processed.
-            Print.info(f"Running benchmark ({self.duration} sec)...")
-            sleep(self.duration)
-            self._kill_nodes()
-
-            # Parse logs and return the parser.
-            Print.info("Parsing logs...")
-            return LogParser.process(PathMaker.logs_path(), faults=self.faults)
 
         except (subprocess.SubprocessError, ParseError) as e:
             self._kill_nodes()

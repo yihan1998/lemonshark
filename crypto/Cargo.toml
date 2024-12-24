@@ -1,15 +1,11 @@
 [package]
-name = "worker"
+name = "crypto"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 tokio = { version = "1.5.0", features = ["sync", "rt", "macros"] }
+ed25519-dalek = { version = "1.0.1", features = ["batch"] }
 serde = { version = "1.0", features = ["derive"] }
-bytes = "1.0.1"
-log = "0.4.14"
-futures = "0.3.14"
-async-trait = "0.1.50"
-
-config = { path = "../config" }
-network = { path = "../network" }
+rand = "0.7.3"
+base64 = "0.13.0"

@@ -1,4 +1,4 @@
 [workspace]
 members = [
-    "config", "network", "node", "worker",
+    "config", "crypto", "network", "node", "agent", "master",
 ]
